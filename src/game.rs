@@ -4,11 +4,9 @@ use bevy::{
 };
 use std::f32::consts::PI;
 use rand::random;
+use crate::{GameState, SCALE, SCREEN_SIZE, despawn_screen, GameOverCause, MenuState, HALF_SCREEN_SIZE};
 
-use crate::HALF_SCREEN_SIZE;
-
-use crate::{GameState, SCALE, SCREEN_SIZE, despawn_screen, GameOverCause, MenuState};
-
+// consts
 const PIPE_SPEED: f32 = 50.0;
 const HALF_PIPE_SPACE: f32 = 50.0;
 const MAX_PIPE_HOLE_Y: f32 = 80.;
@@ -33,6 +31,7 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app
+            .insert_resource(Scoreboard(0))
             .add_systems(OnEnter(GameState::Game), setup)
             .add_systems(Update, (
                 (
@@ -48,14 +47,32 @@ impl Plugin for GamePlugin {
     }
 }
 
+//enums
+enum PipeSide {
+    Top,
+    Bottom,
+}
+
+// resources
 #[derive(Resource)]
 struct CollisionSound(Handle<AudioSource>);
 
+#[derive(Resource)]
+pub struct Scoreboard(pub u32);
+
+impl Scoreboard {
+    fn add(&mut self, score: u32) {
+        self.0 += score;
+    }
+
+    fn reset(&mut self) {
+        self.0 = 0;
+    }
+}
+
+// components
 #[derive(Component)]
 struct OnGameScreen;
-
-#[derive(Component)]
-struct Pipe(PipeSide);
 
 #[derive(Component)]
 struct Borb;
@@ -67,23 +84,17 @@ struct Gravity(f32);
 struct Collider(Vec2);
 
 #[derive(Component)]
-struct Enemy(GameOverCause);
+struct Obstacle(GameOverCause);
 
 #[derive(Component)]
-struct PipeParent;
+struct PipeParent(bool);
 
-enum PipeSide {
-    Top,
-    Bottom,
-}
-
+// bundles
 #[derive(Bundle)]
 struct PipeBundle {
     sprite: SpriteBundle,
     collider: Collider,
-    pipe: Pipe,
-    on_game_screen: OnGameScreen,
-    enemy: Enemy,
+    enemy: Obstacle,
 }
 
 impl PipeBundle {
@@ -103,23 +114,35 @@ impl PipeBundle {
                 ..default()
             },
             collider: Collider(PIPE_COLLIDER),
-            pipe: Pipe(side),
-            on_game_screen: OnGameScreen,
-            enemy: Enemy(GameOverCause::HitPipe),
+            enemy: Obstacle(GameOverCause::HitPipe),
         }
     }
 }
 
+// functions
 fn random_pipe_hole_y() -> f32 {
     random::<f32>() * MAX_PIPE_HOLE_Y * 2.0 - MAX_PIPE_HOLE_Y
 }
 
+fn game_over(
+    cause: GameOverCause,
+    game_state: &mut ResMut<NextState<GameState>>,
+    menu_state: &mut ResMut<NextState<MenuState>>,
+) {
+    game_state.set(GameState::Menu);
+    menu_state.set(MenuState::GameOver(cause));
+}
+
+// systems
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut score: ResMut<Scoreboard>,
 ) {
     let game_over_sound = asset_server.load("sounds/game_over.wav");
     commands.insert_resource(CollisionSound(game_over_sound));
+
+    score.reset();
 
     // Borb
     let borb_texture = asset_server.load("sprites/borb.png");
@@ -143,7 +166,7 @@ fn setup(
         let y = random_pipe_hole_y();
         commands
             .spawn((
-                PipeParent,
+                PipeParent(false),
                 SpatialBundle {
                     transform: Transform {
                         translation: Vec3 { x, y, z: 0.0 },
@@ -152,6 +175,7 @@ fn setup(
                     },
                     ..Default::default()
                 },
+                OnGameScreen,
             ))
             .with_children(|parent| {
                 parent.spawn(PipeBundle::new(Vec2 { x: 0., y: -HALF_PIPE_SPACE }, pipe.clone(), PipeSide::Bottom));
@@ -161,14 +185,21 @@ fn setup(
 }
 
 fn move_pipes(
-    mut query: Query<&mut Transform, With<PipeParent>>,
+    mut query: Query<(&mut Transform, &mut PipeParent)>,
+    borb_query: Query<&Transform, (With<Borb>, Without<PipeParent>)>,
     time: Res<Time>,
+    mut score: ResMut<Scoreboard>,
 ) {
-    for mut transform in &mut query {
+    let borb_transform = borb_query.single();
+    for (mut transform, mut pipe) in &mut query {
         transform.translation.x -= PIPE_SPEED * time.delta_seconds();
         if transform.translation.x < -HALF_SCREEN_WIDTH_WITH_HALF_PIPE {
             transform.translation.y = random_pipe_hole_y();
             transform.translation.x = HALF_SCREEN_WIDTH_WITH_HALF_PIPE;
+            pipe.0 = false
+        } else if !pipe.0 && transform.translation.x < borb_transform.translation.x {
+            score.add(1);
+            pipe.0 = true;
         }
     }
 }
@@ -191,13 +222,13 @@ fn apply_gravity(mut query: Query<(&mut Transform, &mut Gravity)>, time: Res<Tim
 
 fn check_for_collisions(
     mut commands: Commands,
-    mut borb_query: Query<(&Transform, &Collider), With<Borb>>,
-    collider_query: Query<(&GlobalTransform, &Collider, &Enemy)>,
+    borb_query: Query<(&Transform, &Collider), With<Borb>>,
+    collider_query: Query<(&GlobalTransform, &Collider, &Obstacle)>,
     mut game_state: ResMut<NextState<GameState>>,
     mut menu_state: ResMut<NextState<MenuState>>,
     sound: Res<CollisionSound>,
 ) {
-    let (borb_transform, borb_collider) = borb_query.single_mut();
+    let (borb_transform, borb_collider) = borb_query.single();
 
     for (transform, collider, enemy) in &collider_query {
         let collision = collide(
@@ -238,13 +269,4 @@ fn check_out_of_bounds(
             settings: PlaybackSettings::DESPAWN,
         });
     }
-}
-
-fn game_over(
-    cause: GameOverCause,
-    game_state: &mut ResMut<NextState<GameState>>,
-    menu_state: &mut ResMut<NextState<MenuState>>,
-) {
-    game_state.set(GameState::Menu);
-    menu_state.set(MenuState::GameOver(cause));
 }

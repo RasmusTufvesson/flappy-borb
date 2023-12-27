@@ -1,6 +1,6 @@
 use bevy::{app::AppExit, prelude::*};
-
 use crate::{despawn_screen, GameState, TEXT_COLOR, MenuState, GameOverCause};
+use crate::game::Scoreboard;
 
 pub struct MenuPlugin;
 
@@ -160,6 +160,7 @@ fn main_menu_setup(mut commands: Commands) {
 fn game_over_menu_setup(
     mut commands: Commands,
     menu_state: Res<State<MenuState>>,
+    score: Res<Scoreboard>,
 ) {
     let button_style = Style {
         width: Val::Px(140.0),
@@ -216,6 +217,11 @@ fn game_over_menu_setup(
                             ..default()
                         }),
                     );
+                    
+                    parent.spawn(TextBundle::from_section(
+                        format!("{} score", score.0),
+                        text_style.clone(),
+                    ));
 
                     if let MenuState::GameOver(cause) = menu_state.get() {
                         parent.spawn(TextBundle::from_section(
@@ -227,6 +233,7 @@ fn game_over_menu_setup(
                             text_style.clone(),
                         ));
                     }
+
                     parent
                         .spawn((
                             ButtonBundle {
