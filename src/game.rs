@@ -51,6 +51,8 @@ const JUMP_PARTICLE_RELATIVE_START_POS: Vec2 = Vec2 { x: -BORB_COLLIDER.x / 2., 
 const JUMP_PARTICLE_NUM: u32 = 4;
 const JUMP_PARTICLE_DISTANCE: Vec2 = Vec2 { x: BORB_COLLIDER.x / (JUMP_PARTICLE_NUM - 1) as f32, y: 0.0 };
 const JUMP_PARTICLE_DIRECTION: Vec2 = Vec2::NEG_Y;
+const FAST_FALL_PARTICLE_RELATIVE_START_POS: Vec2 = Vec2 { x: -BORB_COLLIDER.x / 2., y: BORB_COLLIDER.y / 2. };
+const FAST_FALL_PARTICLE_DIRECTION: Vec2 = Vec2::Y;
 
 pub struct GamePlugin;
 
@@ -193,8 +195,11 @@ struct OnGameScreen;
 #[derive(Component)]
 struct Borb;
 
-#[derive(Component, Deref, DerefMut)]
-struct Gravity(f32);
+#[derive(Component)]
+struct Gravity {
+    gravity: f32,
+    from_fast_fall: bool,
+}
 
 #[derive(Component)]
 struct Collider(Vec2);
@@ -346,7 +351,7 @@ fn setup(
             ..default()
         },
         Borb,
-        Gravity(0.0),
+        Gravity { gravity: 0.0, from_fast_fall: false },
         Collider(BORB_COLLIDER),
         OnGameScreen,
     ));
@@ -434,7 +439,8 @@ fn jump(
 ) {
     let (mut gravity, transform) = query.single_mut();
     if keyboard_input.just_pressed(KeyCode::Space) {
-        gravity.0 = JUMP_FORCE;
+        gravity.gravity = JUMP_FORCE;
+        gravity.from_fast_fall = false;
         for i in 0..JUMP_PARTICLE_NUM {
             create_particle(
                 transform.translation.truncate() + JUMP_PARTICLE_RELATIVE_START_POS + JUMP_PARTICLE_DISTANCE * i as f32,
@@ -444,23 +450,31 @@ fn jump(
             );
         }
     } else if upgrades.fast_fall && keyboard_input.just_pressed(KeyCode::ControlLeft) {
-        gravity.0 = FAST_FALL_SPEED;
+        gravity.gravity = FAST_FALL_SPEED;
+        gravity.from_fast_fall = true;
+        for i in 0..JUMP_PARTICLE_NUM {
+            create_particle(
+                transform.translation.truncate() + FAST_FALL_PARTICLE_RELATIVE_START_POS + JUMP_PARTICLE_DISTANCE * i as f32,
+                FAST_FALL_PARTICLE_DIRECTION,
+                &mut commands,
+                &asset_server
+            );
+        }
     }
 }
 
 fn apply_gravity(
     mut query: Query<(&mut Transform, &mut Gravity)>,
     time: Res<Time>,
-    upgrades: Res<BorbUpgrades>,
 ) {
     for (mut transform, mut gravity) in &mut query {
-        gravity.0 -= GRAVITY * time.delta_seconds();
-        if upgrades.fast_fall {
-            gravity.0 = gravity.0.max(FAST_FALL_SPEED);
+        gravity.gravity -= GRAVITY * time.delta_seconds();
+        if gravity.from_fast_fall {
+            gravity.gravity = gravity.gravity.max(FAST_FALL_SPEED);
         } else {
-            gravity.0 = gravity.0.max(MAX_GRAVITY);
+            gravity.gravity = gravity.gravity.max(MAX_GRAVITY);
         }
-        transform.translation.y += gravity.0 * time.delta_seconds();
+        transform.translation.y += gravity.gravity * time.delta_seconds();
     }
 }
 
@@ -538,7 +552,7 @@ fn update_borb_rotation(
     mut borb_query: Query<(&mut Transform, &Gravity), With<Borb>>,
 ) {
     let (mut transform, gravity) = borb_query.single_mut();
-    transform.rotation = Quat::from_rotation_z(gravity.0 * DEGREES_PER_GRAVITY);
+    transform.rotation = Quat::from_rotation_z(gravity.gravity * DEGREES_PER_GRAVITY);
 }
 
 fn update_particles(
