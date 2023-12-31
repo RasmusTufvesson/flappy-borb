@@ -219,7 +219,7 @@ fn game_over_menu_setup(
                     );
                     
                     parent.spawn(TextBundle::from_section(
-                        format!("{} score", score.0),
+                        format!("{} score", score.score),
                         text_style.clone(),
                     ));
 
