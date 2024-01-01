@@ -188,6 +188,23 @@ impl WorldChaos {
     }
 }
 
+#[derive(Resource)]
+struct ObstacleGenerator {
+    last_generated: PipeType,
+}
+
+impl ObstacleGenerator {
+    fn next_obstacle(&mut self, chaos: &ResMut<WorldChaos>) -> PipeType {
+        if chaos.different_pipes && self.last_generated != PipeType::Middle && random::<f32>() < 0.2 {
+            self.last_generated = PipeType::Middle;
+            return PipeType::Middle;
+        } else {
+            self.last_generated = PipeType::Normal;
+            return PipeType::Normal;
+        }
+    }
+}
+
 // components
 #[derive(Component)]
 struct OnGameScreen;
@@ -208,7 +225,7 @@ struct Collider(Vec2);
 struct Obstacle(GameOverCause);
 
 #[derive(Component)]
-struct PipeParent(bool, PipeType);
+struct PipeParent(bool);
 
 #[derive(Component)]
 struct Notification(f32);
@@ -338,6 +355,7 @@ fn setup(
     commands.insert_resource(Scoreboard { score: 0, was_last_upgrade_good: true });
     commands.insert_resource(WorldChaos::default());
     commands.insert_resource(BorbUpgrades::default());
+    commands.insert_resource(ObstacleGenerator { last_generated: PipeType::Normal });
 
     let game_over_sound = asset_server.load("sounds/game_over.wav");
     commands.insert_resource(CollisionSound(game_over_sound));
@@ -365,7 +383,7 @@ fn setup(
         let y = random_pipe_hole_y();
         commands
             .spawn((
-                PipeParent(false, PipeType::Normal),
+                PipeParent(false),
                 SpatialBundle {
                     transform: Transform {
                         translation: Vec3 { x, y, z: 0.0 },
@@ -392,34 +410,29 @@ fn move_pipes(
     mut score: ResMut<Scoreboard>,
     mut chaos: ResMut<WorldChaos>,
     mut upgrades: ResMut<BorbUpgrades>,
+    mut obstacle_generator: ResMut<ObstacleGenerator>,
+
 ) {
     for (children, mut transform, mut pipe) in &mut query {
         transform.translation.x -= chaos.world_speed * time.delta_seconds();
         if transform.translation.x < -HALF_SCREEN_WIDTH_WITH_HALF_PIPE {
-            if chaos.different_pipes && pipe.1 != PipeType::Middle && random::<f32>() < 0.2 {
-                for child in children.iter() {
-                    if let Ok((mut visibility, pipe_type)) = pipe_query.get_mut(*child) {
-                        if pipe_type == &PipeType::Middle {
-                            *visibility = Visibility::Visible;
-                        } else {
-                            *visibility = Visibility::Hidden;
-                        }
+            let obstacle = obstacle_generator.next_obstacle(&chaos);
+            for child in children.iter() {
+                if let Ok((mut visibility, pipe_type)) = pipe_query.get_mut(*child) {
+                    if pipe_type == &obstacle {
+                        *visibility = Visibility::Visible;
+                    } else {
+                        *visibility = Visibility::Hidden;
                     }
                 }
-                pipe.1 = PipeType::Middle;
-                transform.translation.y = 0.;
-            } else {
-                for child in children.iter() {
-                    if let Ok((mut visibility, pipe_type)) = pipe_query.get_mut(*child) {
-                        if pipe_type == &PipeType::Normal {
-                            *visibility = Visibility::Visible;
-                        } else {
-                            *visibility = Visibility::Hidden;
-                        }
-                    }
+            }
+            match obstacle {
+                PipeType::Middle => {
+                    transform.translation.y = 0.;
                 }
-                pipe.1 = PipeType::Normal;
-                transform.translation.y = random_pipe_hole_y();
+                PipeType::Normal => {
+                    transform.translation.y = random_pipe_hole_y();
+                }
             }
             transform.translation.x = HALF_SCREEN_WIDTH_WITH_HALF_PIPE;
             pipe.0 = false
