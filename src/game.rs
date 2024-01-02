@@ -344,6 +344,7 @@ fn create_particle(
                 false => -1.,
             }
         },
+        OnGameScreen,
     ));
 }
 
